@@ -1,6 +1,6 @@
 find_packages(PHONE_RINGER_PACKAGES REQUIRED
-    Canberra
     Gee
+    Gst
     GLib
     GModule
     GObject

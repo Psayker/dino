@@ -1,6 +1,6 @@
 find_packages(NOTIFICATION_SOUND_PACKAGES REQUIRED
-    Canberra
     Gee
+    Gst
     GLib
     GModule
     GObject

@@ -1,50 +1,98 @@
 using Dino.Entities;
 using Xmpp;
+using Gst;
 
 namespace Dino.Plugins.PhoneRinger {
 
-public class Plugin : RootInterface, NotificationProvider, Object {
+public class StreamPlayer {
+
+    private MainLoop loop = new MainLoop ();
+    private Element player = ElementFactory.make("playbin", "play");
+
+    private void foreach_tag (Gst.TagList list, string tag) {
+        switch (tag) {
+        case "title":
+            string tag_string;
+            list.get_string (tag, out tag_string);
+            stdout.printf ("tag: %s = %s\n", tag, tag_string);
+            break;
+        default:
+            break;
+        }
+    }
+
+    private bool bus_callback (Gst.Bus bus, Gst.Message message) {
+        switch (message.type) {
+        case MessageType.ERROR:
+            GLib.Error err;
+            string debug;
+            message.parse_error (out err, out debug);
+            stdout.printf ("Error: %s\n", err.message);
+            loop.quit();
+            break;
+        case MessageType.EOS:
+            stdout.printf("end of stream\n");
+            break;
+        case MessageType.STATE_CHANGED:
+            Gst.State oldstate;
+            Gst.State newstate;
+            Gst.State pending;
+            message.parse_state_changed (out oldstate, out newstate,
+                                            out pending);
+            stdout.printf("state changed: %s->%s:%s\n",
+                            oldstate.to_string (), newstate.to_string (),
+                            pending.to_string ());
+            break;
+        case MessageType.TAG:
+            Gst.TagList tag_list;
+            stdout.printf("taglist found\n");
+            message.parse_tag (out tag_list);
+            tag_list.foreach((TagForeachFunc) foreach_tag);
+            break;
+        default:
+            break;
+        }
+
+        return true;
+    }
+
+    public void play (string stream) {
+        playerplayer.uri = stream;
+
+        Gst.Bus bus = player.get_bus ();
+        bus.add_watch(0, bus_callback);
+
+        player.set_state(State.PLAYING);
+
+        loop.run ();
+    }
+
+    public void stop() {
+        player.set_state(State.PLAYING_TO_PAUSED);
+    }
+}
+
+public class Plugin : RootInterface, NotificationProvider, GLib.Object {
 
     private const int GAP = 1;
     private const int RINGER_ID = 0;
     private const int DIALER_ID = 1;
-    private Canberra.Context sound_context;
-    private Canberra.Proplist ringer_props;
-    private Canberra.Proplist dialer_props;
+    private StreamPlayer sound_player;
     private bool ringing = false;
     private bool dialing = false;
 
     private void loop_ringer() {
-        sound_context.play_full(RINGER_ID, ringer_props, (c, id, code) => {
-            if (code == Canberra.Error.CANCELED) return;
-            Timeout.add_seconds(GAP, () => {
-                if (!ringing) return Source.REMOVE;
-                loop_ringer();
-                return Source.REMOVE;
-            });
-        });
+        sound_player.play("resource://org/ringer.mp3");
     }
 
     private void loop_dialer() {
-        sound_context.play_full(DIALER_ID, dialer_props, (c, id, code) => {
-            if (code == Canberra.Error.CANCELED) return;
-            Timeout.add_seconds(GAP, () => {
-                if (!dialing) return Source.REMOVE;
-                loop_dialer();
-                return Source.REMOVE;
-            });
-        });
+        sound_player.play("resource://org/dialer.mp3");
     }
 
     public void registered(Dino.Application app) {
 
-        Canberra.Context.create(out sound_context);
-        Canberra.Proplist.create(out ringer_props);
-        Canberra.Proplist.create(out dialer_props);
-        ringer_props.sets(Canberra.PROP_EVENT_ID, "phone-incoming-call");
-        ringer_props.sets(Canberra.PROP_EVENT_DESCRIPTION, "Incoming call");
-        dialer_props.sets(Canberra.PROP_EVENT_ID, "phone-outgoing-calling");
-        dialer_props.sets(Canberra.PROP_EVENT_DESCRIPTION, "Outgoing call");
+        Gst.init (ref args);
+        sound_player = new StreamPlayer();
 
         NotificationEvents notification_events = app.stream_interactor.get_module(NotificationEvents.IDENTITY);
         notification_events.register_notification_provider.begin(this);
@@ -59,7 +107,7 @@ public class Plugin : RootInterface, NotificationProvider, Object {
 
     public async void retract_call_notification(Call call, Conversation conversation){
         ringing = false;
-        sound_context.cancel(RINGER_ID);
+        sound_player.stop();
     }
 
     public async void notify_dialing(){
@@ -69,14 +117,14 @@ public class Plugin : RootInterface, NotificationProvider, Object {
 
     public async void retract_dialing(){
         dialing = false;
-        sound_context.cancel(DIALER_ID);
+        sound_player.stop();
     }
 
     public double get_priority(){
         return 0;
     }
 
-    public async void notify_message(Message message, Conversation conversation, string conversation_display_name, string? participant_display_name){}
+    public async void notify_message(Dino.Entities.Message message, Conversation conversation, string conversation_display_name, string? participant_display_name){}
     public async void notify_file(FileTransfer file_transfer, Conversation conversation, bool is_image, string conversation_display_name, string? participant_display_name){}
     public async void notify_subscription_request(Conversation conversation){}
     public async void notify_connection_error(Account account, ConnectionManager.ConnectionError error){}
